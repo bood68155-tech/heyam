@@ -7,3 +7,6 @@ credentials.json
 
 # Runtime logs
 bot.log
+
+# Generated Render env values (contain live secrets)
+render-secrets.txt
