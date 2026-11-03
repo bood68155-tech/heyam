@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "start": "node index.js",
-    "render-env": "node scripts/encode-for-render.js"
+    "render-env": "node scripts/encode-for-render.js",
+    "render-deploy": "node scripts/render-deploy.js"
   },
   "engines": {
     "node": ">=18"
