@@ -28,6 +28,8 @@ if (!SPREADSHEET_ID) {
 if (!GEMINI_API_KEY) {
   console.warn('⚠️ GEMINI_API_KEY is missing. Only the dash format will be accepted.');
 }
+// Note: the key is passed to Google as-is. If Google rejects it, the bot logs the
+// error and falls back to the dash format rather than stopping.
 
 const SPREADSHEET_SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
