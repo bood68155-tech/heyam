@@ -1,0 +1,6 @@
+# Dependencies
+node_modules/
+
+# Secrets - never commit these
+.env
+credentials.json
