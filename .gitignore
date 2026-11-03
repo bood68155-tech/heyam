@@ -4,3 +4,6 @@ node_modules/
 # Secrets - never commit these
 .env
 credentials.json
+
+# Runtime logs
+bot.log

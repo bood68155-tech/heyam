@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const http = require('http');
 
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -60,7 +62,47 @@ const bot = new Telegraf(BOT_TOKEN);
 let sheetsClient = null;
 
 function getCredentialsKeyFile() {
-  return process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, 'credentials.json');
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    return process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  }
+
+  // Hosts like Render have an ephemeral filesystem and no way to upload a file,
+  // so the service account JSON can be provided as an environment variable
+  // (raw JSON or base64). It is written to a temp file on every start.
+  const inlineCredentials = process.env.GOOGLE_CREDENTIALS_JSON;
+  if (inlineCredentials) {
+    const json = inlineCredentials.trim().startsWith('{')
+      ? inlineCredentials
+      : Buffer.from(inlineCredentials, 'base64').toString('utf8');
+    const tempKeyFile = path.join(os.tmpdir(), 'student-bot-credentials.json');
+    fs.writeFileSync(tempKeyFile, json, { mode: 0o600 });
+    return tempKeyFile;
+  }
+
+  return path.join(__dirname, 'credentials.json');
+}
+
+// Render's free tier requires a bound port and kills the service after 15
+// minutes without inbound traffic, so this answers health checks and lets an
+// external pinger keep the bot awake. Local runs (no PORT) skip it entirely.
+function startHealthServer() {
+  const port = process.env.PORT;
+  if (!port) {
+    return;
+  }
+
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Telegram bot is running');
+  });
+
+  server.on('error', (error) => {
+    console.error(`Health server error on port ${port}:`, error.message);
+  });
+
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`Health server listening on port ${port}`);
+  });
 }
 
 function getSheetsClient() {
@@ -316,12 +358,14 @@ function main() {
     console.error(`   Expected: ${keyFile}`);
     console.error('   Download a service account JSON key from Google Cloud, then either');
     console.error('   rename it to credentials.json or set GOOGLE_APPLICATION_CREDENTIALS in .env.');
+    console.error('   On a cloud host, set GOOGLE_CREDENTIALS_JSON to the file contents instead.');
     console.error('   Also share the spreadsheet with the service account client_email.');
     process.exit(1);
   }
 
   console.log('Bot is running... Press Ctrl+C to stop.');
   console.log(`Parsing messages with Gemini model: ${GEMINI_MODEL}`);
+  startHealthServer();
 
   bot.launch(() => {
     console.log('Telegram bot started successfully.');

@@ -1,0 +1,36 @@
+# Render Blueprint — free plan deployment for the Telegram bot.
+# Deploy: Render Dashboard -> New -> Blueprint -> pick this repository.
+#
+# Free-tier notes (see https://render.com/docs/free):
+#  * Only web services / static sites / databases can be free, so the bot runs as
+#    a web service and index.js binds an HTTP health server on $PORT.
+#  * A free web service is killed after 15 minutes with no inbound traffic.
+#    Point a free uptime pinger (e.g. cron-job.org, UptimeRobot) at the service
+#    URL every 5-10 minutes to keep it awake.
+#  * The filesystem is ephemeral, so the service account key is passed as the
+#    GOOGLE_CREDENTIALS_JSON environment variable instead of a committed file.
+services:
+  - type: web
+    name: telegram-student-bot
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 24.18.0
+      # Set these in the Render dashboard (they are not stored in git).
+      - key: BOT_TOKEN
+        sync: false
+      - key: SPREADSHEET_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      # Paste the full service account JSON (or its base64) as this value.
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
