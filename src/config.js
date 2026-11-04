@@ -88,6 +88,29 @@ function resolveCredentials() {
   return { source: 'none', options: {} };
 }
 
+/**
+ * The service account address that the spreadsheet must be shared with.
+ * Not a secret (it is the public half of the identity) and the single most
+ * useful thing to print when Google answers 403 "The caller does not have
+ * permission" — it is exactly the address that was never added as an editor.
+ */
+function resolveClientEmail(credentials) {
+  try {
+    if (credentials.options.credentials?.client_email) {
+      return credentials.options.credentials.client_email;
+    }
+    const keyFile = credentials.options.keyFile;
+    if (keyFile && fs.existsSync(keyFile)) {
+      return JSON.parse(fs.readFileSync(keyFile, 'utf8')).client_email || null;
+    }
+  } catch {
+    // unreadable/malformed key file is reported by configProblems()
+  }
+  return null;
+}
+
+const credentials = resolveCredentials();
+
 const config = {
   root: ROOT,
   botToken: (process.env.BOT_TOKEN || '').trim(),
@@ -97,7 +120,8 @@ const config = {
     // this repository) are both accepted.
     spreadsheetId: parseSpreadsheetId(process.env.GOOGLE_SHEET_ID || process.env.SPREADSHEET_ID),
     sheetName: (process.env.GOOGLE_SHEET_NAME || 'Students').trim(),
-    credentials: resolveCredentials(),
+    credentials,
+    clientEmail: resolveClientEmail(credentials),
   },
   gemini: {
     apiKey: (process.env.GEMINI_API_KEY || '').trim(),

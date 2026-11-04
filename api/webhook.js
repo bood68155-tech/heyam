@@ -84,6 +84,7 @@ function sendStatus(req, res, statusCode = 200) {
     ai: Boolean(config.gemini.apiKey),
     sheet: config.sheets.spreadsheetId || null,
     sheetTab: config.sheets.sheetName,
+    serviceAccount: config.sheets.clientEmail,
     countryCode: config.defaultCountryCode || null,
     problems,
   };

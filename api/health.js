@@ -50,6 +50,8 @@ module.exports = async (req, res) => {
     sheet: config.sheets.spreadsheetId || null,
     sheetTab: config.sheets.sheetName,
     credentials: config.sheets.credentials.source,
+    // Share the spreadsheet with this address (Editor) when Google answers 403.
+    serviceAccount: config.sheets.clientEmail,
     ai: gemini.aiEnabled(),
     countryCode: config.defaultCountryCode || null,
     problems,
@@ -81,6 +83,9 @@ module.exports = async (req, res) => {
     // Token/credential failures (invalid_grant, 403 on the spreadsheet, a
     // malformed private key) surface here with the real Google message.
     report.sheets = { ok: false, error: err.message };
+    if (/permission|403|forbidden/i.test(err.message) && config.sheets.clientEmail) {
+      report.sheets.hint = `شارك الجدول مع ${config.sheets.clientEmail} بصلاحية Editor`;
+    }
     logger.error(`health check failed: ${err.message}`);
   }
 
