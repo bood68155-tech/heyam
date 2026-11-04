@@ -1,12 +1,7 @@
-# Dependencies
 node_modules/
-
-# Secrets - never commit these
 .env
-credentials.json
-
-# Runtime logs
-bot.log
-
-# Generated Render env values (contain live secrets)
-render-secrets.txt
+.env.*
+!.env.example
+*.log
+credentials/
+service-account*.json

@@ -1,21 +1,23 @@
 {
-  "name": "student-data-telegram-bot",
+  "name": "student-bot",
   "version": "1.0.0",
-  "description": "Telegram bot built with telegraf that receives student data and stores it in a Google Sheet",
-  "main": "index.js",
   "private": true,
+  "description": "Telegram bot for student registration backed by Google Sheets and Google Gemini",
+  "main": "src/index.js",
   "scripts": {
-    "start": "node index.js",
-    "render-env": "node scripts/encode-for-render.js",
-    "render-deploy": "node scripts/render-deploy.js"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "check": "node scripts/selfcheck.js",
+    "webhook:info": "node scripts/webhook.js info",
+    "webhook:set": "node scripts/webhook.js set",
+    "webhook:delete": "node scripts/webhook.js delete"
   },
   "engines": {
-    "node": ">=18"
+    "node": "22.x"
   },
   "dependencies": {
-    "@google/genai": "^2.32.0",
-    "dotenv": "^16.4.5",
-    "googleapis": "^189.0.0",
-    "telegraf": "^4.16.3"
+    "dotenv": "^17.2.3",
+    "googleapis": "^164.0.0",
+    "grammy": "^1.38.3"
   }
 }
