@@ -70,6 +70,12 @@ module.exports = async (req, res) => {
     const health = await sheets.healthCheck();
     report.sheets = health;
 
+    // Most common deployment failure: the sheet was never shared with the bot.
+    if (!health.ok && /permission|forbidden/i.test(health.error || '') && config.sheets.clientEmail) {
+      report.sheets.hint = `شارك جدول Google مع ${config.sheets.clientEmail} بصلاحية Editor`;
+      report.sheets.hintEn = `Share the spreadsheet with ${config.sheets.clientEmail} as Editor`;
+    }
+
     if (wantWrite) {
       if (health.ok) {
         report.writeTest = await sheets.writeRoundTrip();
