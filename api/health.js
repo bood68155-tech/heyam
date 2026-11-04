@@ -52,6 +52,8 @@ module.exports = async (req, res) => {
     credentials: config.sheets.credentials.source,
     // Share the spreadsheet with this address (Editor) when Google answers 403.
     serviceAccount: config.sheets.clientEmail,
+    // Whether the PEM survived the trip into the environment intact.
+    privateKey: config.sheets.privateKey,
     ai: gemini.aiEnabled(),
     countryCode: config.defaultCountryCode || null,
     problems,

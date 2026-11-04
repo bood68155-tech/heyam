@@ -54,15 +54,44 @@ function parseInlineCredentials(raw) {
 }
 
 /**
+ * A service account key can arrive double escaped: the two characters `\` + `n`
+ * survive JSON parsing, so the whole PEM lands on one physical line and the
+ * crypto layer receives a key with no line breaks. Collapse them to real
+ * newlines before the key reaches google-auth-library.
+ *
+ * Safe for a well-formed key: base64 contains no backslash, so there is nothing
+ * legitimate to replace.
+ */
+function normalizePrivateKey(privateKey) {
+  if (typeof privateKey !== 'string' || !privateKey) return privateKey;
+  return privateKey.replace(/\\n/g, '\n').trim();
+}
+
+function normalizeServiceAccount(creds) {
+  if (!creds || typeof creds !== 'object') return creds;
+  if (typeof creds.private_key !== 'string') return creds;
+  return { ...creds, private_key: normalizePrivateKey(creds.private_key) };
+}
+
+/**
  * Resolve Google credentials from one of three supported shapes.
- * @returns {{ source: string, options: object }}
+ * @returns {{ source: string, options: object, escapedNewlines?: boolean }}
  */
 function resolveCredentials() {
   const inline = parseInlineCredentials(
     process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_CREDENTIALS_JSON,
   );
   if (inline) {
-    return { source: 'inline-json', options: { credentials: inline } };
+    // Remember whether the key arrived escaped, so /health can report what was
+    // actually fixed instead of leaving it a mystery.
+    const escapedNewlines =
+      typeof inline.private_key === 'string' && inline.private_key.includes('\\n');
+
+    return {
+      source: 'inline-json',
+      options: { credentials: normalizeServiceAccount(inline) },
+      escapedNewlines,
+    };
   }
 
   const keyFile = (process.env.GOOGLE_APPLICATION_CREDENTIALS || '').trim();
@@ -79,9 +108,10 @@ function resolveCredentials() {
       options: {
         credentials: {
           client_email: email,
-          private_key: privateKey.replace(/\\n/g, '\n'),
+          private_key: normalizePrivateKey(privateKey),
         },
       },
+      escapedNewlines: privateKey.includes('\\n'),
     };
   }
 
@@ -109,6 +139,25 @@ function resolveClientEmail(credentials) {
   return null;
 }
 
+/**
+ * Shape of the key as the auth client will actually see it. A malformed PEM
+ * fails at signing time with a crypto error ("no start line", invalid_grant),
+ * never with an HTTP 403 — this is what makes that distinction visible.
+ */
+function describePrivateKey(credentials) {
+  const key = credentials.options.credentials?.private_key;
+  if (typeof key !== 'string' || !key) return { present: false };
+
+  const trimmed = key.trim();
+  return {
+    present: true,
+    escapedNewlinesFixed: Boolean(credentials.escapedNewlines),
+    lines: trimmed.split('\n').length,
+    hasHeader: /^-----BEGIN (?:RSA )?PRIVATE KEY-----/.test(trimmed),
+    hasFooter: /-----END (?:RSA )?PRIVATE KEY-----$/.test(trimmed),
+  };
+}
+
 const credentials = resolveCredentials();
 
 const config = {
@@ -122,6 +171,7 @@ const config = {
     sheetName: (process.env.GOOGLE_SHEET_NAME || 'Students').trim(),
     credentials,
     clientEmail: resolveClientEmail(credentials),
+    privateKey: describePrivateKey(credentials),
   },
   gemini: {
     apiKey: (process.env.GEMINI_API_KEY || '').trim(),
@@ -148,6 +198,13 @@ function configProblems() {
     !fs.existsSync(config.sheets.credentials.options.keyFile)
   ) {
     problems.push(`ملف الاعتماد غير موجود: ${config.sheets.credentials.options.keyFile}`);
+  }
+
+  const key = config.sheets.privateKey;
+  if (key.present && (!key.hasHeader || !key.hasFooter)) {
+    problems.push(
+      'GOOGLE_SERVICE_ACCOUNT_JSON يحتوي private_key مشوّهاً — يجب أن يبدأ بـ -----BEGIN PRIVATE KEY----- وينتهي بـ -----END PRIVATE KEY----- (تأكد من نسخ ملف JSON كاملاً دون تعديل)',
+    );
   }
   return problems;
 }
