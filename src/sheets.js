@@ -22,7 +22,13 @@ const LAST_COLUMN = 'E';
 
 let clientPromise = null;
 let metaCache = null;
-let headerChecked = false;
+
+// The header check is cached, but only for a few minutes: a long-running
+// (polling) instance must notice when someone clears the tab. Otherwise the
+// flag stays "already checked" forever and the next student is appended into
+// row 1, leaving the sheet without a header row.
+const HEADER_TTL_MS = 5 * 60 * 1000;
+let headerState = { verifiedAt: 0, status: 'unknown' };
 
 // Serialize mutations: two students pressing "حفظ" at the same time must not
 // interleave append/delete operations.
@@ -92,35 +98,74 @@ async function ensureSheet() {
   return metaCache;
 }
 
-/** Write the header row when the sheet is still empty. */
-async function ensureHeader() {
-  if (headerChecked) return { created: false };
+/**
+ * Classify row 1 of the tab:
+ *   'empty'   nothing written yet — the header row gets written
+ *   'header'  already our header row (blank cells are treated as ours to fill)
+ *   'foreign' somebody else's data — never overwritten
+ */
+function headerRowStatus(firstRow = []) {
+  const cells = HEADERS.map((_, index) => String(firstRow?.[index] ?? '').trim());
+  if (cells.every((cell) => cell === '')) return 'empty';
+  // A partially labelled tab (some header cells filled by hand) is still ours
+  // as long as no cell holds a value that does not belong to that column.
+  const ours = cells.every((cell, index) => cell === '' || cell === HEADERS[index]);
+  return ours ? 'header' : 'foreign';
+}
+
+/**
+ * Bootstrap the header row, so a brand-new spreadsheet needs no manual setup:
+ * it is written automatically when the tab is empty and repaired when only some
+ * header cells are present. Runs before every read/write through ensureReady().
+ *
+ * Row 1 is never overwritten when it already holds real data (a student record
+ * added by hand, a custom header, …) — losing a record to a bootstrap is worse
+ * than a missing header, so that case is reported instead.
+ *
+ * @returns {Promise<{ created: boolean, repaired: boolean, status: string, cached?: boolean }>}
+ */
+async function ensureHeader({ force = false } = {}) {
+  const fresh = headerState.verifiedAt && Date.now() - headerState.verifiedAt < HEADER_TTL_MS;
+  if (fresh && !force) {
+    return { created: false, repaired: false, status: headerState.status, cached: true };
+  }
 
   const sheets = await getClient();
+  const { spreadsheetId, sheetName } = config.sheets;
   const range = `${quotedSheetName()}!A1:${LAST_COLUMN}1`;
 
-  const current = await sheets.spreadsheets.values.get({
-    spreadsheetId: config.sheets.spreadsheetId,
-    range,
-  });
-
+  const current = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   const firstRow = current.data.values?.[0] || [];
-  const hasContent = firstRow.some((cell) => String(cell ?? '').trim() !== '');
-  if (hasContent) {
-    headerChecked = true;
-    return { created: false };
+  const status = headerRowStatus(firstRow);
+
+  if (status === 'foreign') {
+    headerState = { verifiedAt: Date.now(), status };
+    logger.warn(
+      `الصف الأول في "${sheetName}" يحتوي بيانات ليست ترويسة البوت — لم تُكتب الترويسة فوقها`,
+    );
+    return { created: false, repaired: false, status };
+  }
+
+  const exact = HEADERS.every((label, index) => String(firstRow?.[index] ?? '').trim() === label);
+  if (exact) {
+    headerState = { verifiedAt: Date.now(), status: 'header' };
+    return { created: false, repaired: false, status: 'header' };
   }
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: config.sheets.spreadsheetId,
+    spreadsheetId,
     range,
     valueInputOption: 'RAW',
     requestBody: { values: [HEADERS] },
   });
 
-  headerChecked = true;
-  logger.info(`Header row written to "${config.sheets.sheetName}"`);
-  return { created: true };
+  headerState = { verifiedAt: Date.now(), status: 'header' };
+  logger.info(
+    status === 'empty'
+      ? `تم إنشاء صف الترويسة في "${sheetName}": ${HEADERS.join(' | ')}`
+      : `تم إكمال صف الترويسة الناقص في "${sheetName}"`,
+  );
+  return { created: true, repaired: status === 'header', status: status === 'empty' ? 'created' : 'repaired' };
 }
 
 /**
@@ -265,9 +310,15 @@ async function writeRoundTrip() {
 async function healthCheck() {
   try {
     await ensureSheet();
-    const { created } = await ensureHeader();
+    const header = await ensureHeader();
     const students = await listStudents();
-    return { ok: true, headerCreated: created, count: students.length, sheetName: config.sheets.sheetName };
+    return {
+      ok: true,
+      headerCreated: header.created,
+      headerStatus: header.status,
+      count: students.length,
+      sheetName: config.sheets.sheetName,
+    };
   } catch (err) {
     // Keep Google's machine-readable reason: PERMISSION_DENIED means the sheet was
     // never shared with the service account, SERVICE_DISABLED means the Sheets API
@@ -290,6 +341,7 @@ async function healthCheck() {
 
 module.exports = {
   HEADERS,
+  headerRowStatus,
   ensureSheet,
   ensureHeader,
   ensureReady,
