@@ -4,10 +4,15 @@
     "api/webhook.js": {
       "memory": 1024,
       "maxDuration": 30
+    },
+    "api/health.js": {
+      "memory": 1024,
+      "maxDuration": 30
     }
   },
   "rewrites": [
     { "source": "/", "destination": "/api/webhook" },
-    { "source": "/webhook", "destination": "/api/webhook" }
+    { "source": "/webhook", "destination": "/api/webhook" },
+    { "source": "/health", "destination": "/api/health" }
   ]
 }

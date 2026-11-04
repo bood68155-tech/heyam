@@ -17,10 +17,57 @@ const messages = require('../messages');
 const state = require('../state');
 const gemini = require('../gemini');
 const sheets = require('../sheets');
-const { FIELD_ORDER, looksLikeBulk } = require('../utils');
+const { FIELD_ORDER, FIELD_LABELS, looksLikeBulk } = require('../utils');
 const { validateField, validateRecord } = require('../validators');
 
 const SECTION_CALLBACKS = { ar: 'عربي', en: 'إنجليزي' };
+
+const LABEL_TO_FIELD = new Map(Object.entries(FIELD_LABELS).map(([field, label]) => [label, field]));
+
+function unescapeHtml(value) {
+  return String(value)
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Rebuild a student record from the preview message the button is attached to.
+ *
+ * Serverless instances are ephemeral: the instance handling an inline-button
+ * press is not necessarily the one that asked the questions, and a cold start
+ * wipes the in-memory session. The preview text itself is the durable copy of
+ * what the student confirmed, and we wrote it, so it can be read back exactly.
+ *
+ * @returns {object|null} a partial record, or null when the text is not a preview
+ */
+function parsePreviewRecord(text) {
+  if (!text) return null;
+  const data = {};
+
+  const lines = String(text).split('\n');
+  // Only read the framed record block: the AI notes below it can contain
+  // "label: value" looking text that must never overwrite a real field.
+  const firstFrame = lines.findIndex((line) => line.includes('━'));
+  const lastFrame = lines.length - 1 - [...lines].reverse().findIndex((line) => line.includes('━'));
+  const block = firstFrame !== -1 && lastFrame > firstFrame ? lines.slice(firstFrame, lastFrame + 1) : lines;
+
+  for (const rawLine of block) {
+    const line = rawLine.replace(/<[^>]*>/g, '').replace(/^[^\p{L}\p{N}+]+/u, '');
+    const separator = line.indexOf(':');
+    if (separator === -1) continue;
+
+    const field = LABEL_TO_FIELD.get(line.slice(0, separator).trim());
+    if (!field) continue;
+
+    const value = unescapeHtml(line.slice(separator + 1).trim());
+    if (value) data[field] = value;
+  }
+
+  return Object.keys(data).length ? data : null;
+}
 
 function sectionKeyboard() {
   return new InlineKeyboard().text('عربي', 'add:section:ar').text('English', 'add:section:en');
@@ -225,19 +272,50 @@ async function onCallback(ctx) {
   }
 
   if (action === 'save') {
-    if (session.step !== 'confirm' || !session.data?.universityId) {
-      await ctx.answerCallbackQuery().catch(() => {});
-      return ctx.reply(messages.add.alreadySaved);
+    const fromSession =
+      session.step === 'confirm' && session.data?.universityId ? session.data : null;
+
+    let record = fromSession;
+
+    // Session gone (new instance / cold start): recover the confirmed record
+    // from the preview message instead of silently dropping the student.
+    if (!record) {
+      const preview = parsePreviewRecord(ctx.callbackQuery.message?.text);
+      const checked = preview
+        ? validateRecord(preview, { defaultCountryCode: config.defaultCountryCode })
+        : { ok: false };
+
+      if (!checked.ok) {
+        logger.warn('add:save without session and without a recoverable preview');
+        await ctx.answerCallbackQuery().catch(() => {});
+        return ctx.reply(messages.add.expired);
+      }
+
+      record = checked.data;
+      logger.info(`Recovered pending record from preview message (chat ${chatId})`);
     }
+
     try {
-      const saved = await sheets.appendStudent(session.data);
+      // Guard against a double press: the first write already landed, so the
+      // second one would insert the same student twice.
+      if (!fromSession) {
+        const existing = await sheets.findByUniversityId(record.universityId);
+        if (existing) {
+          state.clear(chatId);
+          await ctx.answerCallbackQuery().catch(() => {});
+          await stripKeyboard(ctx);
+          return ctx.reply(messages.add.duplicate(existing), { parse_mode: 'HTML' });
+        }
+      }
+
+      const saved = await sheets.appendStudent(record);
       state.clear(chatId);
       await ctx.answerCallbackQuery({ text: 'تم الحفظ ✅' }).catch(() => {});
       await stripKeyboard(ctx);
-      return ctx.reply(messages.add.saved(session.data, saved.updatedRange), { parse_mode: 'HTML' });
+      return ctx.reply(messages.add.saved(record, saved.updatedRange), { parse_mode: 'HTML' });
     } catch (err) {
       logger.error(`append failed: ${err.message}`);
-      await ctx.answerCallbackQuery({ text: 'فشل الحفظ', show_alert: false }).catch(() => {});
+      await ctx.answerCallbackQuery({ text: 'فشل الحفظ' }).catch(() => {});
       return ctx.reply(messages.errors.sheets);
     }
   }
@@ -246,4 +324,4 @@ async function onCallback(ctx) {
   return undefined;
 }
 
-module.exports = { start, startFromBulk, onText, onCallback, finalize };
+module.exports = { start, startFromBulk, onText, onCallback, finalize, parsePreviewRecord };

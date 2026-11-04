@@ -29,6 +29,8 @@ const {
   validateRecord,
 } = require('../src/validators');
 const { heuristicParse } = require('../src/heuristic');
+const messages = require('../src/messages');
+const { parsePreviewRecord } = require('../src/flows/addStudent');
 
 let passed = 0;
 const failures = [];
@@ -191,6 +193,38 @@ check('unlabelled block still yields name, ID and phone', () => {
 check('garbage input produces no fields', () => {
   const parsed = heuristicParse('مرحبا');
   assert.deepStrictEqual(parsed, {});
+});
+
+console.log('\n=== serverless save recovery ===');
+check('a confirmed preview rebuilds the exact record (session lost on another instance)', () => {
+  const pending = {
+    fullName: 'محمد أحمد علي الصالح',
+    universityId: '20231234',
+    section: 'عربي',
+    major: 'هندسة حاسوب',
+    phone: '967771234567',
+  };
+  const preview = messages.add.preview(pending, {
+    aiUsed: true,
+    changes: ['التخصص: تم توحيد المسمى'],
+  });
+  const recovered = parsePreviewRecord(preview);
+  assert.deepStrictEqual(recovered, { ...pending, phone: '+967771234567' });
+  assert.deepStrictEqual(validateRecord(recovered, { defaultCountryCode: '967' }).data, pending);
+});
+check('AI notes cannot overwrite fields, and plain questions are not previews', () => {
+  const withNotes = messages.add.preview(
+    {
+      fullName: 'سارة علي حسن عمر',
+      universityId: '20240001',
+      section: 'إنجليزي',
+      major: 'Computer Science',
+      phone: '967771234567',
+    },
+    { changes: ['التخصص: تم توحيد المسمى إلى Computer Science'] },
+  );
+  assert.strictEqual(parsePreviewRecord(withNotes).major, 'Computer Science');
+  assert.strictEqual(parsePreviewRecord(messages.add.ask.fullName), null);
 });
 
 console.log(`\n${failures.length === 0 ? '✅' : '❌'} ${passed} passed, ${failures.length} failed\n`);

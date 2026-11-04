@@ -22,6 +22,7 @@ const LAST_COLUMN = 'E';
 
 let clientPromise = null;
 let metaCache = null;
+let headerChecked = false;
 
 // Serialize mutations: two students pressing "حفظ" at the same time must not
 // interleave append/delete operations.
@@ -93,6 +94,8 @@ async function ensureSheet() {
 
 /** Write the header row when the sheet is still empty. */
 async function ensureHeader() {
+  if (headerChecked) return { created: false };
+
   const sheets = await getClient();
   const range = `${quotedSheetName()}!A1:${LAST_COLUMN}1`;
 
@@ -103,7 +106,10 @@ async function ensureHeader() {
 
   const firstRow = current.data.values?.[0] || [];
   const hasContent = firstRow.some((cell) => String(cell ?? '').trim() !== '');
-  if (hasContent) return { created: false };
+  if (hasContent) {
+    headerChecked = true;
+    return { created: false };
+  }
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: config.sheets.spreadsheetId,
@@ -112,14 +118,29 @@ async function ensureHeader() {
     requestBody: { values: [HEADERS] },
   });
 
+  headerChecked = true;
   logger.info(`Header row written to "${config.sheets.sheetName}"`);
   return { created: true };
 }
 
+/**
+ * Make the tab + header row exist before reading or writing.
+ *
+ * Under long polling `main()` runs a health check at startup, which does this
+ * implicitly. A serverless cold start has no such bootstrap, so every data path
+ * calls this itself — otherwise the first append fails with
+ * "Unable to parse range: 'Students'!A:E" when the tab does not exist yet.
+ */
+async function ensureReady() {
+  await ensureSheet();
+  await ensureHeader();
+}
+
 /** Read every student row (row 2 onwards) with its real sheet row number. */
 async function listStudents() {
+  await ensureReady();
   const sheets = await getClient();
-  const { spreadsheetId, sheetName } = config.sheets;
+  const { spreadsheetId } = config.sheets;
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -145,6 +166,7 @@ async function appendStudent(student) {
     return String(student[field] ?? '').trim();
   });
 
+  await ensureReady();
   const sheets = await getClient();
   const { spreadsheetId } = config.sheets;
 
@@ -213,6 +235,32 @@ function safeDelete(rowNumber) {
   return withWriteLock(() => deleteRow(rowNumber));
 }
 
+/**
+ * Prove the whole write path against the real spreadsheet: append a marked row,
+ * then delete it again so the sheet is left exactly as it was.
+ * Used by GET /health?write=1 to verify credentials *and* permissions.
+ */
+async function writeRoundTrip() {
+  const probe = {
+    fullName: 'HEALTH CHECK (صف اختبار يُحذف تلقائياً)',
+    universityId: 'HEALTHCHECK',
+    section: 'عربي',
+    major: 'فحص الكتابة التلقائي',
+    phone: '967000000000',
+  };
+
+  return withWriteLock(async () => {
+    const saved = await appendStudent(probe);
+    const rowMatch = /![A-Za-z]+(\d+)/.exec(saved.updatedRange || '');
+    if (!rowMatch) {
+      return { ok: false, error: 'تعذّر تحديد الصف المكتوب', range: saved.updatedRange };
+    }
+    const rowNumber = Number(rowMatch[1]);
+    await deleteRow(rowNumber);
+    return { ok: true, range: saved.updatedRange, deletedRow: rowNumber };
+  });
+}
+
 /** Startup check: credentials work, sheet is reachable, header present. */
 async function healthCheck() {
   try {
@@ -229,6 +277,8 @@ module.exports = {
   HEADERS,
   ensureSheet,
   ensureHeader,
+  ensureReady,
+  writeRoundTrip,
   listStudents,
   appendStudent: safeAppend,
   searchStudents,
