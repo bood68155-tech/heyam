@@ -72,10 +72,17 @@ module.exports = async (req, res) => {
     const health = await sheets.healthCheck();
     report.sheets = health;
 
-    // Most common deployment failure: the sheet was never shared with the bot.
-    if (!health.ok && /permission|forbidden/i.test(health.error || '') && config.sheets.clientEmail) {
-      report.sheets.hint = `شارك جدول Google مع ${config.sheets.clientEmail} بصلاحية Editor`;
-      report.sheets.hintEn = `Share the spreadsheet with ${config.sheets.clientEmail} as Editor`;
+    // Name the fix instead of leaving the operator with a bare Google message.
+    if (!health.ok && config.sheets.clientEmail) {
+      if (health.reason === 'SERVICE_DISABLED' || /has not been used|is disabled/i.test(health.error || '')) {
+        report.sheets.hint =
+          'فعّل Google Sheets API في مشروع Google Cloud ثم انتظر دقيقة';
+        report.sheets.hintEn =
+          'Enable the Google Sheets API at https://console.cloud.google.com/apis/library/sheets.googleapis.com';
+      } else if (/permission|forbidden/i.test(health.error || '')) {
+        report.sheets.hint = `شارك جدول Google مع ${config.sheets.clientEmail} بصلاحية Editor`;
+        report.sheets.hintEn = `Share the spreadsheet with ${config.sheets.clientEmail} as Editor`;
+      }
     }
 
     if (wantWrite) {

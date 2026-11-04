@@ -269,7 +269,22 @@ async function healthCheck() {
     const students = await listStudents();
     return { ok: true, headerCreated: created, count: students.length, sheetName: config.sheets.sheetName };
   } catch (err) {
-    return { ok: false, error: err.message, sheetName: config.sheets.sheetName };
+    // Keep Google's machine-readable reason: PERMISSION_DENIED means the sheet was
+    // never shared with the service account, SERVICE_DISABLED means the Sheets API
+    // is off in the Cloud project. The message alone cannot tell those apart.
+    const reason =
+      err?.errors?.[0]?.reason ||
+      err?.response?.data?.error?.errors?.[0]?.reason ||
+      err?.response?.data?.error?.status ||
+      null;
+
+    return {
+      ok: false,
+      error: err.message,
+      status: err?.code || err?.response?.status || null,
+      reason,
+      sheetName: config.sheets.sheetName,
+    };
   }
 }
 
