@@ -50,6 +50,9 @@ module.exports = async (req, res) => {
     sheet: config.sheets.spreadsheetId || null,
     sheetTab: config.sheets.sheetName,
     credentials: config.sheets.credentials.source,
+    // Which variable won, so a stale key left in the other name is visible.
+    credentialsVar: config.sheets.credentialsEnvVar,
+    shadowedCredentialsVar: config.sheets.shadowedCredentialsEnvVar,
     // Share the spreadsheet with this address (Editor) when Google answers 403.
     serviceAccount: config.sheets.clientEmail,
     // Whether the PEM survived the trip into the environment intact.

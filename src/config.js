@@ -78,9 +78,17 @@ function normalizeServiceAccount(creds) {
  * @returns {{ source: string, options: object, escapedNewlines?: boolean }}
  */
 function resolveCredentials() {
-  const inline = parseInlineCredentials(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_CREDENTIALS_JSON,
-  );
+  // Two names are accepted, and the first one wins. Naming the winner in
+  // /health is the difference between "the new key was ignored" and "the new key
+  // is wrong": a stale variable left behind from an earlier setup silently
+  // shadows the one that was edited.
+  const candidates = [
+    ['GOOGLE_SERVICE_ACCOUNT_JSON', process.env.GOOGLE_SERVICE_ACCOUNT_JSON],
+    ['GOOGLE_CREDENTIALS_JSON', process.env.GOOGLE_CREDENTIALS_JSON],
+  ].filter(([, value]) => (value || '').trim());
+
+  const [envVar, raw] = candidates[0] || [];
+  const inline = parseInlineCredentials(raw);
   if (inline) {
     // Remember whether the key arrived escaped, so /health can report what was
     // actually fixed instead of leaving it a mystery.
@@ -89,6 +97,10 @@ function resolveCredentials() {
 
     return {
       source: 'inline-json',
+      envVar,
+      // Both variables populated means one is dead weight and may be the stale
+      // 403-causing identity. Worth reporting rather than guessing.
+      shadowedVar: candidates[1] ? candidates[1][0] : null,
       options: { credentials: normalizeServiceAccount(inline) },
       escapedNewlines,
     };
@@ -171,6 +183,9 @@ const config = {
     sheetName: (process.env.GOOGLE_SHEET_NAME || 'Students').trim(),
     credentials,
     clientEmail: resolveClientEmail(credentials),
+    // Which environment variable actually supplied the identity above.
+    credentialsEnvVar: credentials.envVar || null,
+    shadowedCredentialsEnvVar: credentials.shadowedVar || null,
     privateKey: describePrivateKey(credentials),
   },
   gemini: {
