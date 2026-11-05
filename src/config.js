@@ -226,4 +226,14 @@ function assertConfig({ requireBotToken = true } = {}) {
   }
 }
 
-module.exports = { config, configProblems, assertConfig, parseSpreadsheetId, parseIds };
+module.exports = {
+  config,
+  configProblems,
+  assertConfig,
+  parseSpreadsheetId,
+  parseIds,
+  // Exported so the offline self-check can prove the PEM repair instead of
+  // trusting it: a wrongly escaped key only fails later, at signing time.
+  normalizePrivateKey,
+  parseInlineCredentials,
+};

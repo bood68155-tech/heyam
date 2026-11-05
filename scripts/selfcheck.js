@@ -31,6 +31,8 @@ const {
 const { heuristicParse } = require('../src/heuristic');
 const messages = require('../src/messages');
 const { parsePreviewRecord } = require('../src/flows/addStudent');
+const { HEADERS, headerRowStatus } = require('../src/sheets');
+const { normalizePrivateKey, parseInlineCredentials } = require('../src/config');
 
 let passed = 0;
 const failures = [];
@@ -225,6 +227,76 @@ check('AI notes cannot overwrite fields, and plain questions are not previews', 
   );
   assert.strictEqual(parsePreviewRecord(withNotes).major, 'Computer Science');
   assert.strictEqual(parsePreviewRecord(messages.add.ask.fullName), null);
+});
+
+console.log('\n=== Students header bootstrap ===');
+check('the five column labels are exactly the scripted header', () => {
+  assert.deepStrictEqual(HEADERS, [
+    'الاسم الرباعي',
+    'الرقم الجامعي',
+    'الشعبة',
+    'التخصص',
+    'رقم الهاتف واتس',
+  ]);
+});
+check('a blank tab is detected as empty so the header gets written', () => {
+  assert.strictEqual(headerRowStatus([]), 'empty');
+  assert.strictEqual(headerRowStatus(['', '', '', '', '']), 'empty');
+  assert.strictEqual(headerRowStatus(['   ', '\t', '', '  ', '']), 'empty');
+});
+check('a partially labelled row is completed instead of rejected', () => {
+  assert.strictEqual(headerRowStatus(['الاسم الرباعي', '', '', '', '']), 'header');
+  assert.strictEqual(
+    headerRowStatus(['الاسم الرباعي', 'الرقم الجامعي', 'الشعبة', '', '']),
+    'header',
+  );
+});
+check('an already correct header row is left untouched', () => {
+  assert.strictEqual(headerRowStatus(HEADERS), 'header');
+  assert.strictEqual(headerRowStatus(HEADERS.map((label) => `  ${label} `)), 'header');
+});
+check('row 1 holding real data is never overwritten', () => {
+  // A student record entered by hand.
+  assert.strictEqual(headerRowStatus(['محمد أحمد علي الصالح', '20231234', 'عربي']), 'foreign');
+  // A custom header: the last column is not one the bot owns.
+  assert.strictEqual(
+    headerRowStatus(['الاسم الرباعي', 'الرقم الجامعي', 'الشعبة', 'التخصص', 'الهاتف']),
+    'foreign',
+  );
+});
+
+console.log('\n=== service account private key ===');
+check('escaped \\n sequences become real PEM line breaks', () => {
+  const escaped = '-----BEGIN PRIVATE KEY-----\\nMIIEabc\\n-----END PRIVATE KEY-----';
+  const fixed = normalizePrivateKey(escaped);
+  assert.ok(fixed.includes('\n'), 'expected real newlines');
+  assert.ok(!fixed.includes('\\n'), 'no literal backslash-n may survive');
+  assert.strictEqual(fixed.split('\n').length, 3);
+});
+check('a key that already has real line breaks is unchanged', () => {
+  const proper = '-----BEGIN PRIVATE KEY-----\nMIIEabc\n-----END PRIVATE KEY-----';
+  assert.strictEqual(normalizePrivateKey(proper), proper);
+});
+check('normalizing twice equals normalizing once', () => {
+  const escaped = '-----BEGIN PRIVATE KEY-----\\nMIIEabc\\n-----END PRIVATE KEY-----';
+  assert.strictEqual(normalizePrivateKey(normalizePrivateKey(escaped)), normalizePrivateKey(escaped));
+});
+check('a double-escaped inline JSON key is repaired end to end', () => {
+  // What a dashboard paste produces: the JSON itself still carries \\n,
+  // so JSON.parse yields a PEM that is one physical line.
+  const escapedPem = '-----BEGIN PRIVATE KEY-----\\nMIIEabc\\n-----END PRIVATE KEY-----';
+  const parsed = parseInlineCredentials(JSON.stringify({ private_key: escapedPem }));
+  assert.strictEqual(parsed.private_key.split('\n').length, 1);
+  assert.strictEqual(normalizePrivateKey(parsed.private_key).split('\n').length, 3);
+});
+check('base64-encoded service account JSON is accepted', () => {
+  const json = JSON.stringify({ client_email: 'bot@example.iam.gserviceaccount.com' });
+  const parsed = parseInlineCredentials(Buffer.from(json).toString('base64'));
+  assert.strictEqual(parsed.client_email, 'bot@example.iam.gserviceaccount.com');
+  assert.strictEqual(parseInlineCredentials('   '), null);
+});
+check('a value that is neither JSON nor base64 is rejected loudly', () => {
+  assert.throws(() => parseInlineCredentials('not-credentials'), /invalid service account JSON/);
 });
 
 console.log(`\n${failures.length === 0 ? '✅' : '❌'} ${passed} passed, ${failures.length} failed\n`);
